@@ -7,7 +7,7 @@ import uvicorn
 
 app = FastAPI()
 
-# Redundant but safe for local testing
+# Robust CORS configuration to allow local testing
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -19,103 +19,72 @@ ma = MovieAuto()
 
 @app.get("/", response_class=HTMLResponse)
 async def get_index():
+    # Serving the HTML directly from the backend solves the CORS "null" origin error
     return """
     <!DOCTYPE html>
     <html lang="en">
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>MovieBox.ph Replica</title>
+        <title>MovieBox Live</title>
         <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
         <style>
-            :root { --primary: #ffbb00; --bg: #050505; --card: #121212; --text: #eeeeee; }
-            body { background-color: var(--bg); color: var(--text); font-family: 'Inter', sans-serif; margin: 0; }
-            header { padding: 15px 6%; background: #000; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #222; sticky: top; }
-            .logo { color: var(--primary); font-size: 1.8rem; font-weight: 900; cursor: pointer; letter-spacing: -1px; }
-            .search-bar { display: flex; background: #111; border: 1px solid #333; border-radius: 25px; padding: 5px 15px; width: 300px; }
-            .search-bar input { background: transparent; border: none; color: white; width: 100%; outline: none; }
-            .search-bar button { background: transparent; border: none; color: var(--primary); cursor: pointer; font-weight: bold; }
-            .container { padding: 40px 6%; }
-            .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 25px; }
-            .movie-card { background: var(--card); border-radius: 12px; overflow: hidden; transition: 0.3s; border: 1px solid #222; position: relative; }
-            .movie-card:hover { transform: translateY(-10px); border-color: var(--primary); }
-            .movie-card img { width: 100%; height: 270px; object-fit: cover; }
-            .movie-info { padding: 12px; text-align: center; }
-            .movie-info h3 { font-size: 0.9rem; margin: 0 0 10px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-            .btn { width: 100%; padding: 10px; border-radius: 6px; border: none; font-size: 0.75rem; font-weight: bold; cursor: pointer; margin-bottom: 5px; }
-            .watch-btn { background: var(--primary); color: black; }
-            #player-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.95); z-index: 10000; justify-content: center; align-items: center; }
-            .player-container { width: 90%; max-width: 1100px; position: relative; }
-            video { width: 100%; border-radius: 8px; background: #000; }
-            .close { position: absolute; top: -50px; right: 0; color: white; font-size: 2.5rem; cursor: pointer; }
+            :root { --primary: #ffbb00; --bg: #050505; --card: #121212; --text: #fff; }
+            body { background: var(--bg); color: var(--text); font-family: sans-serif; margin: 0; }
+            header { padding: 15px 5%; background: #000; display: flex; justify-content: space-between; border-bottom: 1px solid #222; }
+            .logo { color: var(--primary); font-size: 1.5rem; font-weight: bold; cursor: pointer; }
+            .search-bar input { padding: 8px; border-radius: 4px; border: 1px solid #333; background: #111; color: #fff; }
+            .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 20px; padding: 20px 5%; }
+            .card { background: var(--card); border-radius: 8px; overflow: hidden; text-align: center; border: 1px solid #222; }
+            .card img { width: 100%; height: 260px; object-fit: cover; }
+            .card h3 { font-size: 0.9rem; margin: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+            .watch-btn { background: var(--primary); border: none; padding: 10px; width: 90%; margin-bottom: 10px; font-weight: bold; cursor: pointer; border-radius: 4px; }
+            #player-overlay { display: none; position: fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.9); z-index:100; justify-content:center; align-items:center; }
+            video { width: 80%; max-width: 1000px; background: #000; }
         </style>
     </head>
     <body>
         <header>
             <div class="logo" onclick="location.reload()">MOVIEBOX</div>
             <div class="search-bar">
-                <input type="text" id="query" placeholder="Search movies...">
-                <button onclick="searchMovie()">SEARCH</button>
+                <input type="text" id="q" placeholder="Search..." onkeypress="if(event.key==='Enter') doSearch()">
             </div>
         </header>
-        <div class="container">
-            <h2 id="title">Trending Now</h2>
-            <div class="grid" id="results"></div>
-        </div>
-        <div id="player-overlay">
-            <div class="player-container">
-                <div class="close" onclick="closePlayer()">&times;</div>
-                <video id="video-player" controls autoplay></video>
-            </div>
+        <div class="grid" id="display"></div>
+        <div id="player-overlay" onclick="this.style.display='none'; document.getElementById('vid').pause();">
+            <video id="vid" controls autoplay></video>
         </div>
         <script>
-            async function loadTrending() {
-                const res = await fetch('/api/trending');
+            async function load(path) {
+                const res = await fetch(path);
                 const data = await res.json();
-                render(data.results);
-            }
-            async function searchMovie() {
-                const q = document.getElementById('query').value;
-                if(!q) return;
-                document.getElementById('title').innerText = "Results for: " + q;
-                const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`);
-                const data = await res.json();
-                render(data.results);
-            }
-            function render(movies) {
-                const grid = document.getElementById('results');
-                grid.innerHTML = movies.map(m => `
-                    <div class="movie-card">
-                        <img src="${m.poster || m.cover || ''}" onerror="this.src='https://via.placeholder.com/180x270?text=No+Poster'">
-                        <div class="movie-info">
-                            <h3>${m.title}</h3>
-                            <button class="btn watch-btn" onclick="playMovie('${m.id}')">WATCH</button>
-                        </div>
+                const grid = document.getElementById('display');
+                grid.innerHTML = data.results && data.results.length ? data.results.map(m => `
+                    <div class="card">
+                        <img src="${m.poster || m.cover || ''}" onerror="this.src='https://via.placeholder.com/200x300?text=No+Poster'">
+                        <h3>${m.title}</h3>
+                        <button class="watch-btn" onclick="event.stopPropagation(); play('${m.id}')">WATCH</button>
                     </div>
-                `).join('');
+                `).join('') : "<h2>No results found.</h2>";
             }
-            async function playMovie(id) {
-                const overlay = document.getElementById('player-overlay');
-                const video = document.getElementById('video-player');
-                overlay.style.display = 'flex';
-                const res = await fetch(`/api/get_stream?movie_id=${id}`);
+            async function doSearch() {
+                const q = document.getElementById('q').value;
+                await load('/api/search?q=' + encodeURIComponent(q));
+            }
+            async function play(id) {
+                const res = await fetch('/api/get_stream?movie_id=' + id);
                 const data = await res.json();
-                if (data.stream_url) {
-                    if (data.stream_url.includes('.m3u8')) {
-                        if (Hls.isSupported()) {
-                            const hls = new Hls();
-                            hls.loadSource(data.stream_url);
-                            hls.attachMedia(video);
-                        } else { video.src = data.stream_url; }
-                    } else { video.src = data.stream_url; }
-                }
+                if(data.stream_url) {
+                    const v = document.getElementById('vid');
+                    document.getElementById('player-overlay').style.display='flex';
+                    if (Hls.isSupported() && data.stream_url.includes('.m3u8')) {
+                        const hls = new Hls();
+                        hls.loadSource(data.stream_url);
+                        hls.attachMedia(v);
+                    } else { v.src = data.stream_url; }
+                } else { alert("Stream not found."); }
             }
-            function closePlayer() {
-                const v = document.getElementById('video-player');
-                v.pause(); v.src = "";
-                document.getElementById('player-overlay').style.display = 'none';
-            }
-            window.onload = loadTrending;
+            window.onload = () => load('/api/trending');
         </script>
     </body>
     </html>
@@ -124,23 +93,31 @@ async def get_index():
 @app.get("/api/trending")
 async def get_trending():
     try:
-        return {"results": ma.movies() or []}
-    except:
+        # ma.movies() often returns a list directly or a dict depending on the wrapper version
+        movies = ma.movies()
+        return {"results": movies if isinstance(movies, list) else []}
+    except Exception as e:
+        print(f"Trending Error: {e}")
         return {"results": []}
 
 @app.get("/api/search")
 async def search(q: str = Query(...)):
     try:
-        return {"results": ma.search(q) or []}
-    except:
+        results = ma.search(q)
+        return {"results": results if isinstance(results, list) else []}
+    except Exception as e:
+        print(f"Search Error: {e}")
         return {"results": []}
 
 @app.get("/api/get_stream")
 async def get_stream(movie_id: str):
     try:
+        # We attempt to find the stream URL from the search result for that ID
         results = ma.search(movie_id)
-        if results and 'url' in results[0]:
-            return {"stream_url": results[0]['url']}
+        if results and isinstance(results, list):
+            for item in results:
+                if item.get('id') == movie_id and 'url' in item:
+                    return {"stream_url": item['url']}
         return {"error": "No stream found"}
     except Exception as e:
         return {"error": str(e)}
