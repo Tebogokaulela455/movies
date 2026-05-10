@@ -86,7 +86,8 @@ async def search(q: str = Query(...)):
     # In a real scenario, we'd map the search results here
     # Since we're keeping it simple, we'll return a structure the frontend can use
     return {"results": [{"id": 1, "title": q}]}
-
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=6060)
+    import os
+    port = int(os.environ.get("PORT", 8000)) # This gets the port from Render/Railway
+    uvicorn.run(app, host="0.0.0.0", port=port)
